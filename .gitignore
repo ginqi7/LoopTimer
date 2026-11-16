@@ -6,3 +6,6 @@ Claude
 *.xcuserstate
 *.xcuserdatad
 xcuserdata/
+
+# build artifacts
+build/
