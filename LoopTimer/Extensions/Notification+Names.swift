@@ -1,7 +1,7 @@
 import Foundation
 
 extension Notification.Name {
-    static let toggleTimerIntent = Notification.Name("toggleTimerIntent")
+    /// Posted by `StopTimerIntent` (which runs in the app process) to ask the
+    /// store to stop the running session.
     static let stopTimerIntent = Notification.Name("stopTimerIntent")
-    static let restoreTimerState = Notification.Name("restoreTimerState")
 }

@@ -1,8 +1,13 @@
 //
 //  TimerActivityAttributes.swift
-//  LoopTimerWidgetExtension
+//  LoopTimer
 //
-//  Activity attributes for Live Activity
+//  Live Activity attributes for the running session.
+//
+//  Everything the lock screen needs is constant for the lifetime of the activity,
+//  so it lives in the attributes: the widget derives the clock itself with
+//  `Text(timerInterval:)`, which means **no update traffic at all** for a session.
+//  ContentState is therefore intentionally empty.
 //
 
 import Foundation
@@ -10,11 +15,14 @@ import ActivityKit
 
 struct TimerActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
-        var loopEndDate: Date              // Widget calculates countdown to this date
-        var isRunning: Bool
-        var pausedRemainingTime: TimeInterval?  // For paused state display (nil when running)
+        public init() {}
     }
 
-    // Static properties that don't change
-    let timerDuration: TimeInterval
+    /// Identifies the session this activity projects (so the app can tell whether
+    /// an existing activity still matches the running session).
+    let sessionID: UUID
+    let title: String
+    let startedAt: Date
+    /// Countdown target for mode 1; nil for a stopwatch (mode 2).
+    let plannedEnd: Date?
 }

@@ -2,14 +2,15 @@
 //  ContentView.swift
 //  LoopTimer
 //
-//  Main app container - single timer view
+//  App container. Root is now the day recorder; the legacy loop-timer screen
+//  (TimerView) is retained in the repo only until milestone ⑤ retires it.
 //
 
 import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        TimerView()
+        TodayView()
             .persistentSystemOverlays(.hidden)
             .onAppear {
                 // Lock to portrait orientation

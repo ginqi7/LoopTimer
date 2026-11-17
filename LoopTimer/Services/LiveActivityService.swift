@@ -2,168 +2,166 @@
 //  LiveActivityService.swift
 //  LoopTimer
 //
-//  Manages Live Activity lifecycle with date-based countdown
+//  Projects the running session onto the lock screen / Dynamic Island.
+//
+//  The activity is a *view* of the session, never the source of truth: records
+//  live in SwiftData, so nothing needs restoring from an activity after a
+//  relaunch. Because the widget renders the clock from `startedAt` with
+//  `Text(timerInterval:)`, a session needs exactly one `Activity.request` and one
+//  `end` — no updates in between.
+//
+//  Two rules learned the hard way:
+//   1. `Activity<T>.activities` must be read **before** a new request is made.
+//      Reading it inside a Task that was scheduled earlier means the freshly
+//      created activity is already in the list, and ending the list ends it —
+//      the activity then never shows up anywhere.
+//   2. Requesting while the app is not in the foreground fails on device, so the
+//      store re-syncs on `scenePhase == .active`.
 //
 
 import ActivityKit
 import Foundation
+import UIKit
 
-class LiveActivityService {
-    private var currentActivity: Activity<TimerActivityAttributes>?
-    private(set) var timerDuration: TimeInterval = 0
+@MainActor
+final class LiveActivityService {
 
-    var hasActiveActivity: Bool {
-        currentActivity != nil
+    enum State: Equatable {
+        case idle
+        case active
+        case disabled      // user turned Live Activities off for this app
+        case failed(String)
+
+        var isProblem: Bool {
+            switch self {
+            case .disabled, .failed: return true
+            case .idle, .active: return false
+            }
+        }
     }
 
-    var currentActivityId: String? {
-        currentActivity?.id
+    private(set) var state: State = .idle {
+        didSet {
+            if state != oldValue { onStateChange?(state) }
+        }
     }
 
-    // MARK: - Public Methods
+    var onStateChange: ((State) -> Void)?
 
-    func startActivity(duration: TimeInterval, loopEndDate: Date) {
-        #if targetEnvironment(simulator)
-        print("Live Activities not supported in simulator")
-        return
-        #endif
+    var isSupported: Bool {
+        ActivityAuthorizationInfo().areActivitiesEnabled
+    }
 
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            print("Live Activities are not enabled")
+    /// Makes the lock screen reflect `session`, starting or replacing the activity
+    /// as needed. Idempotent, so it is safe to call from `reconcile()` and again
+    /// when the app becomes active.
+    func sync(with session: Session?) {
+        guard isSupported else {
+            endAll()
+            state = .disabled
             return
         }
 
-        // End any existing activity
-        endActivity()
-
-        self.timerDuration = duration
-
-        let attributes = TimerActivityAttributes(timerDuration: duration)
-
-        let initialState = TimerActivityAttributes.ContentState(
-            loopEndDate: loopEndDate,
-            isRunning: true,
-            pausedRemainingTime: nil
-        )
-
-        do {
-            let activity = try Activity.request(
-                attributes: attributes,
-                content: .init(state: initialState, staleDate: nil)
-            )
-            self.currentActivity = activity
-            print("Live Activity started successfully")
-        } catch {
-            print("Failed to start Live Activity: \(error)")
-        }
-    }
-
-    func updateForLoopComplete(newLoopEndDate: Date) {
-        #if targetEnvironment(simulator)
-        return
-        #endif
-
-        guard let activity = currentActivity else { return }
-
-        let updatedState = TimerActivityAttributes.ContentState(
-            loopEndDate: newLoopEndDate,
-            isRunning: true,
-            pausedRemainingTime: nil
-        )
-
-        Task {
-            await activity.update(ActivityContent(state: updatedState, staleDate: nil))
-        }
-    }
-
-    func updateForPause(remainingTime: TimeInterval) {
-        #if targetEnvironment(simulator)
-        return
-        #endif
-
-        guard let activity = currentActivity else { return }
-
-        let updatedState = TimerActivityAttributes.ContentState(
-            loopEndDate: Date(),  // Not used when paused
-            isRunning: false,
-            pausedRemainingTime: remainingTime
-        )
-
-        Task {
-            await activity.update(ActivityContent(state: updatedState, staleDate: nil))
-        }
-    }
-
-    func updateForResume(newLoopEndDate: Date) {
-        #if targetEnvironment(simulator)
-        return
-        #endif
-
-        guard let activity = currentActivity else { return }
-
-        let updatedState = TimerActivityAttributes.ContentState(
-            loopEndDate: newLoopEndDate,
-            isRunning: true,
-            pausedRemainingTime: nil
-        )
-
-        Task {
-            await activity.update(ActivityContent(state: updatedState, staleDate: nil))
-        }
-    }
-
-    func endActivity() {
-        #if targetEnvironment(simulator)
-        return
-        #endif
-
-        guard let activity = currentActivity else { return }
-
-        Task {
-            await activity.end(nil, dismissalPolicy: .immediate)
-            print("Live Activity ended")
+        guard let session, session.endedAt == nil else {
+            endAll()
+            state = .idle
+            return
         }
 
-        currentActivity = nil
+        // Re-attach to an activity that already represents this session (after a
+        // relaunch, or when re-syncing on becoming active).
+        if Activity<TimerActivityAttributes>.activities.contains(
+            where: { $0.attributes.sessionID == session.id }
+        ) {
+            state = .active
+            return
+        }
+
+        endStale(except: session.id)
+        request(for: session)
     }
 
-    func endAllActivities() {
-        #if targetEnvironment(simulator)
-        return
-        #endif
-
+    func endAll() {
+        // Snapshot first: any request made after this point must not be caught by
+        // the asynchronous teardown.
+        let existing = Activity<TimerActivityAttributes>.activities
+        guard !existing.isEmpty else { return }
         Task {
-            for activity in Activity<TimerActivityAttributes>.activities {
+            for activity in existing {
                 await activity.end(nil, dismissalPolicy: .immediate)
             }
         }
-        currentActivity = nil
     }
 
-    // MARK: - State Restoration
+    // MARK: - Private
 
-    func attachToExistingActivity() -> (duration: TimeInterval, loopEndDate: Date, isRunning: Bool, remainingTime: TimeInterval?)? {
-        #if targetEnvironment(simulator)
-        return nil
-        #endif
+    private func endStale(except sessionID: UUID) {
+        let stale = Activity<TimerActivityAttributes>.activities.filter {
+            $0.attributes.sessionID != sessionID
+        }
+        guard !stale.isEmpty else { return }
+        Task {
+            for activity in stale {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+    }
 
-        guard let activity = Activity<TimerActivityAttributes>.activities.first else {
-            return nil
+    private func request(for session: Session) {
+        // `Activity.request` only succeeds while the app is in the foreground.
+        // Shortcuts can start a session from the background; the activity is then
+        // created on the next `syncLiveActivity()` (scenePhase == .active).
+        guard UIApplication.shared.applicationState == .active else {
+            print("LiveActivityService: deferred until the app is active")
+            return
         }
 
-        self.currentActivity = activity
-        self.timerDuration = activity.attributes.timerDuration
-
-        let state = activity.content.state
-        return (
-            duration: activity.attributes.timerDuration,
-            loopEndDate: state.loopEndDate,
-            isRunning: state.isRunning,
-            remainingTime: state.pausedRemainingTime
+        let attributes = TimerActivityAttributes(
+            sessionID: session.id,
+            title: session.title,
+            startedAt: session.startedAt,
+            plannedEnd: session.plannedEnd
         )
+
+        do {
+            _ = try Activity.request(
+                attributes: attributes,
+                content: ActivityContent(state: .init(), staleDate: nil)
+            )
+            state = .active
+            print("LiveActivityService: started for \(session.title)")
+        } catch {
+            state = .failed(Self.describe(error))
+            print("LiveActivityService: request failed — \(error)")
+        }
     }
 
-    deinit {
-        endActivity()
+    private static func describe(_ error: Error) -> String {
+        let nsError = error as NSError
+        return "\(nsError.domain) \(nsError.code)"
     }
+
+#if DEBUG
+    /// Diagnostics for `-dumpLiveActivity`.
+    func debugReport() async -> String {
+        let activities = Activity<TimerActivityAttributes>.activities
+        var lines = [
+            "enabled=\(isSupported)",
+            "state=\(state)",
+            "count=\(activities.count)"
+        ]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        for activity in activities {
+            lines.append(
+                "id=\(activity.id) session=\(activity.attributes.sessionID.uuidString.prefix(8))"
+                    + " title=\(activity.attributes.title)"
+                    + " start=\(formatter.string(from: activity.attributes.startedAt))"
+                    + " plannedEnd=\(activity.attributes.plannedEnd.map { formatter.string(from: $0) } ?? "-")"
+                    + " ended=\(activity.activityState)"
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+#endif
 }

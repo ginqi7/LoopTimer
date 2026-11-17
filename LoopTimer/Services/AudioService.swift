@@ -2,73 +2,65 @@
 //  AudioService.swift
 //  LoopTimer
 //
-//  Audio session setup and chime playback
+//  In-app chime playback.
+//
+//  The audio session is activated only while a chime is playing and released
+//  afterwards. It is deliberately *not* held open: the app has no
+//  `UIBackgroundModes: audio` any more, because nothing depends on the process
+//  staying alive (durations come from timestamps, reminders come from the system).
 //
 
 import AVFoundation
 import AudioToolbox
 import Foundation
 
-class AudioService {
-    private var audioPlayer: AVAudioPlayer?
+final class AudioService {
 
-    init() {
-        setupAudioSession()
-    }
+    private var player: AVAudioPlayer?
+    private var releaseWorkItem: DispatchWorkItem?
 
-    // MARK: - Audio Session Setup
-
-    private func setupAudioSession() {
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-
-            // Set category to .playback to ensure:
-            // - Audio plays even when device is on silent
-            // - Audio continues in background
-            // - Similar behavior to Clock app alarms
-            try audioSession.setCategory(.playback, mode: .default, options: [])
-            try audioSession.setActive(true)
-
-            print("Audio session configured successfully")
-        } catch {
-            print("Failed to configure audio session: \(error)")
-        }
-    }
-
-    // MARK: - Public Methods
+    // MARK: - Public
 
     func playChime(soundName: String = "Bell", isMuted: Bool = false) {
-        // Early exit if muted
-        guard !isMuted else {
-            print("Audio muted, skipping chime playback")
-            return
-        }
+        guard !isMuted else { return }
 
-        // Find the sound in the list
-        guard let sound = ChimeSound.allSounds.first(where: { $0.id == soundName }) else {
-            print("Sound not found: \(soundName), using fallback")
-            AudioServicesPlaySystemSound(1013)  // System bell fallback
-            return
-        }
-
-        // Get URL from bundle
-        guard let soundURL = sound.bundleURL else {
-            print("Sound file not found in bundle: \(sound.fileName).\(sound.fileExtension)")
-            AudioServicesPlaySystemSound(1013)  // System bell fallback
+        guard let sound = ChimeSound.allSounds.first(where: { $0.id == soundName }),
+              let soundURL = sound.bundleURL else {
+            AudioServicesPlaySystemSound(1013)
             return
         }
 
         do {
-            // Ensure audio session is active
-            try AVAudioSession.sharedInstance().setActive(true)
-
-            // Create and play audio player
-            audioPlayer = try AVAudioPlayer(contentsOf: soundURL)
-            audioPlayer?.play()
+            try activateSession()
+            let player = try AVAudioPlayer(contentsOf: soundURL)
+            player.volume = 1.0
+            player.play()
+            self.player = player
+            scheduleRelease(after: player.duration)
         } catch {
-            print("Failed to play sound from bundle: \(error)")
-            // Fallback to system sound
+            print("AudioService: playback failed — \(error)")
             AudioServicesPlaySystemSound(1013)
         }
+    }
+
+    // MARK: - Session
+
+    private func activateSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        releaseWorkItem?.cancel()
+        try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+        try session.setActive(true)
+    }
+
+    private func scheduleRelease(after duration: TimeInterval) {
+        releaseWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.player?.stop()
+            self?.player = nil
+            try? AVAudioSession.sharedInstance()
+                .setActive(false, options: [.notifyOthersOnDeactivation])
+        }
+        releaseWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, duration + 0.2), execute: item)
     }
 }

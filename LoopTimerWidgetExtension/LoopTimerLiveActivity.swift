@@ -2,7 +2,11 @@
 //  LoopTimerLiveActivity.swift
 //  LoopTimerWidgetExtension
 //
-//  Live Activity widget for lock screen with client-side countdown
+//  Lock screen / Dynamic Island projection of the running session.
+//
+//  The clock is rendered by `Text(timerInterval:)`, so the system ticks it without
+//  the app sending updates. Countdown sessions count down to `plannedEnd`,
+//  stopwatch sessions count up from `startedAt`.
 //
 
 import ActivityKit
@@ -11,15 +15,15 @@ import SwiftUI
 import AppIntents
 import Foundation
 
-// MARK: - App Intents
+// MARK: - Stop intent
 
-@available(iOS 17.0, *)
+/// Runs in the *app* process (LiveActivityIntent), so it can only talk to the app
+/// through NotificationCenter — the widget target does not compile SessionStore.
 struct StopTimerIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Stop Timer"
-    static var description = IntentDescription("Stops the timer and dismisses the Live Activity")
+    static var title: LocalizedStringResource = "停止记录"
+    static var description = IntentDescription("停止当前任务并记录")
 
     func perform() async throws -> some IntentResult {
-        // Post notification to stop timer
         await MainActor.run {
             NotificationCenter.default.post(name: .stopTimerIntent, object: nil)
         }
@@ -27,28 +31,11 @@ struct StopTimerIntent: LiveActivityIntent {
     }
 }
 
-@available(iOS 17.0, *)
-struct ToggleTimerIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Toggle Timer"
-    static var description = IntentDescription("Pauses or resumes the timer")
-
-    func perform() async throws -> some IntentResult {
-        // Post notification to toggle timer state
-        await MainActor.run {
-            NotificationCenter.default.post(name: .toggleTimerIntent, object: nil)
-        }
-        return .result()
-    }
-}
-
-// MARK: - Notification Names Extension
-
 extension Notification.Name {
     static let stopTimerIntent = Notification.Name("stopTimerIntent")
-    static let toggleTimerIntent = Notification.Name("toggleTimerIntent")
 }
 
-// MARK: - Widget Bundle
+// MARK: - Widget
 
 @main
 struct LoopTimerWidgets: WidgetBundle {
@@ -60,150 +47,106 @@ struct LoopTimerWidgets: WidgetBundle {
 struct LoopTimerLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TimerActivityAttributes.self) { context in
-            // Lock screen / banner UI
             lockScreenView(context: context)
         } dynamicIsland: { context in
             DynamicIsland {
-                // Expanded view
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: context.state.isRunning ? "timer" : "pause.fill")
-                        .foregroundColor(.blue)
-                        .font(.title2)
+                    Text(context.attributes.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    countdownDisplay(context: context)
-                        .font(.title2.monospacedDigit())
-                        .fontWeight(.semibold)
+                    clock(context: context)
+                        .font(.title3.monospacedDigit())
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack(spacing: 16) {
-                        // Toggle play/pause button
-                        if #available(iOS 17.0, *) {
-                            Button(intent: ToggleTimerIntent()) {
-                                Image(systemName: context.state.isRunning ? "pause.fill" : "play.fill")
-                                    .font(.title3)
-                                    .frame(width: 44, height: 44)
-                                    .background(Color.blue.opacity(0.2))
-                                    .foregroundColor(.blue)
-                                    .clipShape(Circle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        // Stop button
-                        if #available(iOS 17.0, *) {
-                            Button(intent: StopTimerIntent()) {
-                                Image(systemName: "xmark")
-                                    .font(.title3)
-                                    .frame(width: 44, height: 44)
-                                    .background(Color.red.opacity(0.2))
-                                    .foregroundColor(.red)
-                                    .clipShape(Circle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.top, 8)
+                    stopButton
+                        .padding(.top, 6)
                 }
             } compactLeading: {
-                Image(systemName: context.state.isRunning ? "timer" : "pause.fill")
-                    .foregroundColor(.blue)
+                Image(systemName: "circle.dotted")
+                    .foregroundStyle(.blue)
             } compactTrailing: {
-                countdownDisplay(context: context)
-                    .font(.caption2.monospacedDigit())
+                compactClock(context: context)
             } minimal: {
-                Image(systemName: "timer")
-                    .foregroundColor(.blue)
+                Image(systemName: "circle.dotted")
+                    .foregroundStyle(.blue)
             }
         }
     }
 
-    @ViewBuilder
+    // MARK: - Lock screen
+
     private func lockScreenView(context: ActivityViewContext<TimerActivityAttributes>) -> some View {
-        VStack(spacing: 12) {
-            HStack {
-                Image(systemName: "timer")
-                    .foregroundColor(.blue)
+        VStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(.blue)
+                    .frame(width: 7, height: 7)
 
-                Text("Loop Timer")
+                Text(context.attributes.title)
                     .font(.headline)
+                    .lineLimit(1)
 
-                Spacer()
+                Spacer(minLength: 8)
 
-                if !context.state.isRunning {
-                    Text("Paused")
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.orange.opacity(0.2))
-                        .foregroundColor(.orange)
-                        .cornerRadius(8)
-                }
+                Text(caption(context: context))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Remaining")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+            HStack(alignment: .center, spacing: 12) {
+                clock(context: context)
+                    .font(.system(size: 34, weight: .light, design: .monospaced))
+                    .monospacedDigit()
 
-                    countdownDisplay(context: context)
-                        .font(.title.monospacedDigit())
-                        .fontWeight(.semibold)
-                }
+                Spacer(minLength: 0)
 
-                Spacer()
-
-                // Control buttons
-                HStack(spacing: 12) {
-                    if #available(iOS 17.0, *) {
-                        Button(intent: ToggleTimerIntent()) {
-                            Image(systemName: context.state.isRunning ? "pause.fill" : "play.fill")
-                                .font(.title2)
-                                .frame(width: 50, height: 50)
-                                .background(Color.blue.opacity(0.2))
-                                .foregroundColor(.blue)
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-
-                        Button(intent: StopTimerIntent()) {
-                            Image(systemName: "xmark")
-                                .font(.title2)
-                                .frame(width: 50, height: 50)
-                                .background(Color.red.opacity(0.2))
-                                .foregroundColor(.red)
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                stopButton
             }
         }
         .padding()
-        .activityBackgroundTint(Color(.systemGray6).opacity(0.8))
-        .activitySystemActionForegroundColor(Color.primary)
+        .activityBackgroundTint(Color(.systemGray6).opacity(0.85))
+        .activitySystemActionForegroundColor(.primary)
     }
 
+    private var stopButton: some View {
+        Button(intent: StopTimerIntent()) {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(Color.red)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Clock
+
     @ViewBuilder
-    private func countdownDisplay(context: ActivityViewContext<TimerActivityAttributes>) -> some View {
-        if context.state.isRunning {
-            // Use client-side countdown when running
-            Text(timerInterval: Date()...context.state.loopEndDate, countsDown: true)
-        } else if let remaining = context.state.pausedRemainingTime {
-            // Show static time when paused
-            Text(formatTime(remaining))
+    private func clock(context: ActivityViewContext<TimerActivityAttributes>) -> some View {
+        if let plannedEnd = context.attributes.plannedEnd {
+            Text(timerInterval: context.attributes.startedAt...max(plannedEnd, context.attributes.startedAt), countsDown: true)
         } else {
-            Text("--:--")
+            Text(context.attributes.startedAt, style: .timer)
         }
     }
 
-    private func formatTime(_ interval: TimeInterval) -> String {
-        let totalSeconds = Int(max(0, interval))
-        let minutes = totalSeconds / 60
-        let seconds = totalSeconds % 60
-        return String(format: "%02d:%02d", minutes, seconds)
+    @ViewBuilder
+    private func compactClock(context: ActivityViewContext<TimerActivityAttributes>) -> some View {
+        if let plannedEnd = context.attributes.plannedEnd {
+            Text(timerInterval: context.attributes.startedAt...max(plannedEnd, context.attributes.startedAt), countsDown: true)
+                .font(.caption2.monospacedDigit())
+        } else {
+            Text(context.attributes.startedAt, style: .timer)
+                .font(.caption2.monospacedDigit())
+        }
+    }
+
+    private func caption(context: ActivityViewContext<TimerActivityAttributes>) -> String {
+        context.attributes.plannedEnd == nil ? "正向计时" : "倒计时"
     }
 }

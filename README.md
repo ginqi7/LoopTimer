@@ -1,155 +1,177 @@
-# Loop Timer for iOS
+# LoopTimer — 记录我的一天
 
-A minimalist iOS timer app with automatic looping functionality, lock screen integration, and smart persistent state.
+一个极简的时间记录器：输入你要做的事，开始，停止。它把一天画成一条 24 小时的垂直时间线，**连空档一起画出来**。
 
-## Features
+主界面是两个可左右滑动的页面：
 
-- **⭕ Automatic Looping**: Timer automatically restarts when it reaches zero
-- **⏸️ Play/Pause Controls**: Start, pause, and resume the timer
-- **🔄 Display Toggle**: Switch between time elapsed and time remaining with tap
-- **➕➖ Visual Indicators**: Always shows +/- sign to indicate elapsed or remaining time
-- **🎬 Smart Animations**: Numbers animate in the correct direction (up for elapsed, down for remaining)
-- **🔔 Chime Sounds**: Customizable sounds on loop completion (Bell, Soft Chime)
-- **🔒 Lock Screen**: Live Activities show timer on lock screen with live updates
-- **🌙 Background Operation**: Timer continues running when app is backgrounded or screen is locked
-- **⚙️ Time Input**: Easy picker wheel interface (hours/minutes/seconds)
-- **💾 Persistent Settings**: Timer duration and display mode are saved across app launches
-- **🎨 Smart UI**: Timer picker hides when active, replaced with duration text; colors adjust based on state
-- **🎯 Minimalist Design**: Clean, simple, and focused interface
+| 页面 | 内容 |
+|---|---|
+| **计时** | 唯一的操作入口——输入任务与时长（0 = 不定时），开始 / 停止；显示运行中的大号计时 |
+| **今天** | 当天的汇总 + 24 小时时间线；只读，可前后翻看历史日、导出数据 |
 
-## UI/UX Highlights
+顶部两个小圆点既是当前页指示，也可以直接点击切换；进入 app 默认停在「计时」页。
 
-- **Tap to Toggle**: Tap the timer display to switch between elapsed and remaining time
-- **Visual Clarity**: Always shows +/- prefix to avoid confusion about elapsed vs remaining time
-- **State-Based Colors**: Timer display dims when idle or paused, vibrant when running
-- **Contextual Interface**: Time picker automatically hides when timer is active, showing duration text instead
-- **Smooth Transitions**: Numbers animate naturally in the correct direction based on counting mode
-- **Persistent Preferences**: All settings (duration, display mode, sound) automatically save
+两页的日期是**互相独立**的：「计时」页永远针对当前这一刻，「今天」页可以随意翻看历史日期，翻历史不会影响计时页的数据（也不会被开始新任务拽回今天）。
 
-## Requirements
-
-- iOS 17.0 or later
-- Xcode 15.0 or later
-- Swift 5.9 or later
-
-## Quick Start
-
-1. **Clone or download this repository**
-2. **Follow the [SETUP_GUIDE.md](SETUP_GUIDE.md)** for detailed Xcode project setup instructions
-3. **Add audio files** (see `LoopTimer/Resources/AUDIO_FILES_README.md`)
-4. **Build and run** on your device
-
-## Project Structure
-
-```
-LoopTimer/
-├── Models/              # Data models (DisplayMode, ChimeSound, TimerState)
-├── Services/            # Business logic (Timer, Audio, Live Activities)
-├── ViewModels/          # MVVM coordinators (TimerViewModel)
-├── Views/              # SwiftUI views (TimerView, TimerDisplayView, etc.)
-├── Extensions/         # Helper extensions (TimeInterval, Date)
-└── Resources/          # Audio files and assets
-
-LoopTimerWidgetExtension/
-└── Live Activity widget implementation
-```
-
-## Architecture
-
-The app follows **MVVM (Model-View-ViewModel)** architecture with service layer:
-
-- **Models**: Value types and enums (DisplayMode, ChimeSound, TimerState)
-- **Services**: Core functionality (timer logic, audio, live activities)
-- **ViewModels**: Coordinate services and manage UI state
-- **Views**: SwiftUI views (presentation layer)
-
-## Key Technical Decisions
-
-### Timer Implementation
-- Uses `DispatchSourceTimer` for better background performance
-- Date-based calculations prevent timer drift
-- State restoration survives app termination
-
-### Audio Playback
-- `AVAudioSession` with `.playback` category
-- Plays even when device is on silent (like alarm apps)
-- Automatically routes to headphones/speaker
-
-### Persistence
-- AppStorage for user preferences (timer duration, display mode, chime sound)
-- UserDefaults for timer state restoration
-- Settings persist across app launches
-- Minimal setup required
-
-### Live Activities
-- ActivityKit integration
-- Displays on lock screen and Dynamic Island
-- Auto-updates with timer progress
-
-## Testing
-
-See [SETUP_GUIDE.md](SETUP_GUIDE.md) for comprehensive testing checklist including:
-
-- Basic timer functionality
-- Audio playback
-- Settings persistence
-- Background operation
-- Live Activities (requires physical device)
-
-## Implementation Phases
-
-This project was built in 5 phases:
-
-1. **Phase 1**: Core timer foundation
-2. **Phase 2**: Audio integration
-3. **Phase 3**: Settings persistence & state restoration
-4. **Phase 4**: Live Activities
-5. **Phase 5**: Background operation & UI polish
-
-Each phase was tested before moving to the next, ensuring a solid foundation.
-
-## Known Limitations
-
-- Live Activities don't work in iOS Simulator (requires physical device)
-- Live Activities auto-dismiss after 8 hours (iOS limitation)
-- Timer doesn't survive device reboot (expected behavior)
-
-## Future Enhancements
-
-Possible features for future versions:
-
-- [ ] UI Updates
-- [ ] Change UI in different orientations
-- [ ] Home Screen widget
-- [ ] Multiple concurrent timers
-- [ ] Preset timer buttons (30s, 1m, 5m quick start)
-- [ ] Timer history log with session tracking
-- [ ] Additional built-in chime sounds
-- [ ] Custom chime upload
-- [ ] Apple Watch companion app
-
-## Contributing
-
-This is a personal project, but suggestions and feedback are welcome. Feel free to fork and modify for your own use.
-
-## License
-
-This project is provided as-is for educational and personal use.
-
-## Acknowledgments
-
-Built with:
-- SwiftUI
-- ActivityKit
-- AVFoundation
-- DispatchSourceTimer
-- Combine
-
-References:
-- [Apple's Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)
-- [Background Execution Best Practices](https://developer.apple.com/documentation/avfoundation/media_playback/configuring_your_app_for_media_playback)
-- [Live Activities Documentation](https://developer.apple.com/documentation/activitykit/displaying-live-data-with-live-activities)
+（这个项目原本是一个「循环倒计时器」。循环的语义已经被吸收进下面的「模式 2」——见[为什么](#为什么不再有循环)。）
 
 ---
 
-Built with ❤️ using SwiftUI and modern iOS development practices.
+## 两种记录方式
+
+输入只有两栏：**任务名** 和 **时长（分钟）**。
+
+- 时长 > 0 → 模式 1（定时长）
+- 时长 = 0 → 模式 2（不定时）
+
+| | 模式 1 · 定时长 | 模式 2 · 不定时 |
+|---|---|---|
+| 输入 | 任务名 + 时长 > 0 | 任务名 + 时长填 0 |
+| 显示 | 剩余时间 | 已进行时间 |
+| 提醒 | 到点提醒一次，随即结束记录 | 每 20 分钟提醒一次，最多 10 次，**提醒文案带累计时长** |
+| 结束 | 自动 | 手动停止 |
+
+两种模式都会记录 `开始时间 / 结束时间 / 时长 / 结束原因`。
+
+## 核心规则
+
+- **新任务静默接管**：开始新任务时，正在进行的任务以此刻为界结束（`superseded`），不会并列运行。
+- **记录不跨夜**：任何任务在次日 00:00 自动截断（`midnightCut`）。
+- **时长只由时间戳推导**（`endedAt - startedAt`），从不累加 tick。因此杀进程、后台、重启都不会让记录失真，也不需要保活进程。
+- **空档是一等公民**：时间线里 `空档` 与 `记录` 同样可见，未来时段用虚线区分。
+
+## 一天的画布
+
+垂直 24 小时，1 小时 = 72pt，不裁剪：
+
+- 任务块按标题哈希取色 → 同名任务同色
+- 模式 2 的每个提醒时刻在块内画一道刻度
+- 红色「现在」线；打开即滚动到当前时刻
+- 支持前后翻看历史日（历史日只看不记）
+
+## 快捷指令 / Siri
+
+三个 App Intent（定义在 app 内，构建时自动导出给「快捷指令」、Siri、聚焦、操作按钮）：
+
+| 意图 | 参数 | 场景 |
+|---|---|---|
+| **快速记录（一句话）** | `内容` | 给 Siri 用：一句话里同时说任务和时长 |
+| **开始记录** | `任务`、`时长（分钟）` | 给「快捷指令」App 里拖拽编排用（结构化） |
+| **停止记录** | — | 结束当前任务并保存 |
+
+### 用 Siri
+
+```
+「嘿 Siri，用 LoopTimer 计时」
+   → Siri：“要记录什么？比如「做饭 25 分钟」”
+「做饭 25 分钟」
+   → 创建任务「做饭」，倒计时 25 分钟 ✅
+```
+
+「内容」里支持这些说法（由 `QuickInputParser` 解析）：
+
+| 说法 | 任务名 | 时长 |
+|---|---|---|
+| `做饭25分钟` / `做饭 25 分钟` / `25分钟做饭` | 做饭 | 25 分钟 |
+| `看书半小时` / `一刻钟冥想` | 看书 / 冥想 | 30 / 15 分钟 |
+| `健身1小时20分钟` | 健身 | 80 分钟（多段相加） |
+| `跑步 40` | 跑步 | 40 分钟（结尾裸数字按分钟） |
+| `写作` | 写作 | 不定时（模式 2） |
+
+### 为什么不能一口气说「计时做饭25分钟」
+
+Apple 对 App 提供的 Siri 短语有两条硬约束（都是编译期检查，我踩过）：
+
+1. 短语**必须**包含 `\(.applicationName)` —— 所以得喊「**用 LoopTimer** 计时」。
+2. 一句短语里**只能有一个参数，且只能是 AppEntity / AppEnum** —— `String`、`Int` 会被拒绝：
+
+   ```
+   error: 'AppEntity' and 'AppEnum' are the only allowed types for 'title'
+   error: A single phrase can only use a single parameter
+   ```
+
+所以 App 自带的短语只能负责「唤醒」，内容交给 Siri 追问一句，再由解析器拆成任务名 + 时长。
+
+如果要**完全一句话、且不带 app 名**，用系统能力实现：
+
+1. 「快捷指令」App → 新建 → 加「快速记录」→ 在 `内容` 里直接填 `做饭25分钟`
+2. 点该快捷指令的「添加到 Siri」（或右侧 ⓘ → 添加到 Siri）→ 自己录一句 **「计时做饭」**
+3. 之后喊「嘿 Siri，计时做饭」就直接执行（参数固定为「做饭 25 分钟」）
+
+常用同一个快捷指令后，Siri 也会主动在锁屏/搜索里建议它。
+
+### 两个要点
+
+1. 意图默认 `openAppWhenRun = false`，**在后台执行、不会把你从当前 app 拉走**。代价是锁屏实时活动不会立刻出现——`Activity.request` 只允许前台调用，它会在你下次打开 app 时补上。记录本身当场生效。
+2. `perform()` 会**等提醒注册完成**再返回，因为后台跑完的意图会被立刻挂起，不能把排通知留给游离的 Task。
+
+## 通知
+
+- 模式 1：单条，在任务真正结束的时刻触发
+- 模式 2：按 `开始时刻 + k×20min` 预排最多 10 条，每条的文案在调度时烧入累计时长
+- identifier 为 `session-<uuid>-reminder-<k>` / `-end`，停止、接管、自动结束时按前缀批量取消
+- 计划由纯函数 `SessionReminderScheduler.plan(for:now:)` 生成，重跑幂等、网格永不漂移
+
+## 导出
+
+设置旁边的分享按钮：**当天 / 全部 × JSON / CSV**。
+
+- CSV：UTF-8 BOM（Excel 中文不乱码）、RFC 4180 转义、CRLF、`yyyy-MM-dd HH:mm:ss` 本地时间
+- JSON：带 `version` / `timeZone` / `totalRecordedSeconds`，时间戳为带时区偏移的 ISO-8601
+
+## 锁屏
+
+运行中的任务会投影到锁屏 / 灵动岛，可直接在锁屏上停止。时钟由 `Text(timerInterval:)` 自己走，**不需要 app 推送更新**。
+
+## 环境要求
+
+- iOS 17.0 或更高
+- Xcode 15.0 或更高
+
+## 构建
+
+```bash
+./build_ipa.sh                      # 未签名 .ipa（供 Sideloadly / AltStore / ESign 重签）
+./build_ipa.sh --team <TEAM_ID>     # 正式签名并导出（需付费开发者账号）
+```
+
+或直接 `open LoopTimer.xcodeproj` 连真机运行。
+
+调试用启动参数（仅 DEBUG 生效）见 `STATUS.md`。
+
+## 结构
+
+```
+LoopTimer/
+├─ Models/        Session（一条记录）、DaySegment/DayComposer（一天怎么切段）
+├─ Services/      SessionStore（唯一真相源）、SessionReminderScheduler、LiveActivityService、
+│                 AudioService、ExportService
+├─ Views/         TodayView（主页）、DayTimelineView（24h 画布）、ExportSheet、SettingsView、SoundPickerView
+├─ Extensions/    时长/时间格式化、通知名
+└─ Resources/     提示音
+LoopTimerWidgetExtension/   Live Activity（锁屏 / 灵动岛）
+```
+
+数据用 SwiftData 持久化。
+
+## 为什么不再有「循环」
+
+原来循环的卖点是「到点自动重来」。但它有两个问题：**没有终点**（忘记停止就一直响），**且圈数从不显示**——用户为了知道进度还得自己数圈。
+
+现在同样的事情用更准确的模型表达：
+
+- 「重复提醒」= 模式 2 的 20 分钟网格
+- 「跑了多少轮」= 时间线上同一任务的多个块
+
+也就是说，循环从「一个计时器内部的状态机」变成了「一天里可见的、可数的记录」。
+
+## 已知限制
+
+- Live Activity 受系统 8 小时上限约束
+- 模式 2 提醒上限 10 次（约 3 小时 20 分）；之后静默，计时与记录继续
+- `.timeSensitive` 中断级别需要额外 entitlement，当前未启用（iOS 会降级为普通通知）
+- 连续多个「不到 1 分钟」的记录，画布上的浮动标签可能互相压叠
+
+## 许可
+
+个人与学习用途。
